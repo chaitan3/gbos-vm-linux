@@ -22,6 +22,25 @@ EOF
   exit 1
 fi
 
-exec python3 "$HERE/make_lapis_security_port.py" \
+VENUS=""
+if [ -f "$HERE/guest-mesa/libvulkan_virtio.so" ]; then
+  VENUS="--venus"
+else
+  echo "note: $HERE/guest-mesa/libvulkan_virtio.so not found; building without Venus (run build_guest_mesa.sh first)" >&2
+fi
+VIRGL=""
+if [ -f "$HERE/guest-mesa/gl/libEGL_virgl.so" ]; then
+  VIRGL="--virgl"
+else
+  echo "note: $HERE/guest-mesa/gl/libEGL_virgl.so not found; building without VirGL GLES (run build_guest_mesa.sh first)" >&2
+fi
+
+python3 "$HERE/make_lapis_security_port.py" \
   --raw "$RAW" --donor "$DONOR" --out "$OUT" \
-  --locksettings "$@"
+  --locksettings --diagnostics --composer --vmcompat $VENUS $VIRGL "$@"
+
+# The captured image ships a ~4 GiB userdata, which fills during first boot (ENOSPC).
+case " $* " in *" --no-copy "*) : ;; *)
+  python3 "$HERE/expand_lapis_userdata.py" "$OUT/googlebook-security.bin" "${GBOS_USERDATA_GIB:-16}"
+  ;;
+esac

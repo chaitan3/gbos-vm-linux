@@ -12,6 +12,14 @@ donor/
 image-security/
 logs/
 __pycache__/
+# Mesa / NDK build inputs and outputs (build_guest_mesa.sh)
+android-ndk-*/
+mesa-*/
+mesa-build/
+guest-mesa/
+# scratch
+.scratch/
+url.txt
 # reference checkout (not part of this repo)
 gbos-vm-mac/
 # sandbox dotfiles

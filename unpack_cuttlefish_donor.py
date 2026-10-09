@@ -196,12 +196,36 @@ def main():
         if gatekeeper:
             (out / 'gatekeeper.nonsecure.apex').write_bytes(vendor_file('/apex/' + gatekeeper))
 
+        # --- Cuttlefish AOSP boot-control service (software A/B, no firmware calls) ---
+        boot_apex = next((n for n in apexes if n == 'com.android.hardware.boot.apex'), None)
+        if boot_apex:
+            bimg = td / 'boot_payload.img'
+            bimg.write_bytes(apex_payload(vendor_file('/apex/' + boot_apex)))
+            (out / 'boot-service').write_bytes(
+                read_fs(bimg, '/bin/hw/android.hardware.boot-service.default'))
+
+        # --- Cuttlefish DRM hardware composer (drives the virtio-gpu display) ---
+        composer_apex = next((n for n in apexes if 'composer' in n and 'drm' in n), None)
+        if composer_apex:
+            cimg = td / 'composer_payload.img'
+            cimg.write_bytes(apex_payload(vendor_file('/apex/' + composer_apex)))
+            cdir = out / 'composer'
+            cdir.mkdir(exist_ok=True)
+            (cdir / 'hwc3-service.drm').write_bytes(
+                read_fs(cimg, '/bin/hw/android.hardware.composer.hwc3-service.drm'))
+            for extra in ['drm_hwcomposer_atom_reporter.so', 'libdrm_hwcomposer.so']:
+                try:
+                    (cdir / extra).write_bytes(read_fs(cimg, '/lib64/' + extra))
+                except Exception:
+                    pass
+
     manifest = {}
     for p in sorted(out.rglob('*')):
         if p.is_file() and p.name != 'donor.json':
             manifest[str(p.relative_to(out))] = hashlib.sha256(p.read_bytes()).hexdigest()
     (out / 'donor.json').write_text(json.dumps({'target': a.target, 'keymint_apex': keymint,
-                                                'gatekeeper_apex': gatekeeper, 'files': manifest}, indent=1) + '\n')
+                                                'gatekeeper_apex': gatekeeper, 'composer_apex': composer_apex,
+                                                'files': manifest}, indent=1) + '\n')
     print('donor written to', out)
     for n, h in manifest.items():
         print(f'  {n}  {h[:16]}')

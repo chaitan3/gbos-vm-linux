@@ -70,6 +70,53 @@ NEUTERED = {
         b'<manifest version="9.0" type="device"/>\n',
 }
 
+# QEMU's virtual GPU lands on PCI 0000:00:01.0 (see boot_venus.sh). Its sysfs nodes must be
+# labelled sysfs_gpu or surfaceflinger/gpuservice get denied reading uevent.
+GPU_SYSFS = '/sys/devices/pci0000:00/0000:00:01.0'
+GRAPHICS_FC_RULE = (r'/sys/devices/pci0000:00/0000:00:01\.0(/.*)? u:object_r:sysfs_gpu:s0' + '\n').encode()
+CONSOLE_FC_RULE = b'/dev/ttyS0 u:object_r:console_device:s0\n'
+
+VM_GRAPHICS_RC = b'''# Relabel the emulated GPU subtree (uevent etc.) using the existing sysfs_gpu type.
+on init
+    restorecon_recursive /sys/devices/pci0000:00/0000:00:01.0
+'''
+
+# The stock lapis build.prop targets Intel and enables the DRM color pipeline, which makes the
+# (Cuttlefish) drm_hwcomposer reject virtio-gpu planes that lack COLOR_PIPELINE. Turn it off and
+# force client (GPU) composition, which is what a virtual display wants anyway.
+COMPOSER_PROPS = {
+    'vendor.hwc.drm.enable_color_pipeline': 'false',
+    'ro.vendor.hwc.use_overlay_planes': 'false',
+}
+
+# Run SurfaceFlinger/HWUI on Mesa VirGL GLES instead of Vulkan-on-Venus: SF's Vulkan
+# render engine imports gralloc buffers through Venus, which aborts on the host's
+# vkGetMemoryResourcePropertiesMESA. GLES (VirGL) avoids that path; Venus stays for apps.
+VIRGL_PROPS = {
+    'ro.hardware.egl': 'virgl',
+    'ro.hwui.use_vulkan': 'false',
+    'debug.renderengine.backend': 'skiaglthreaded',
+    'debug.renderengine.vulkan': 'false',
+    'debug.renderengine.graphite_desktop_optin': 'false',
+    'debug.hwui.renderer': 'skiagl',
+    'ro.gfx.angle.supported': 'false',
+    'ro.surface_flinger.has_wide_color_display': 'false',
+    'ro.surface_flinger.has_HDR_display': 'false',
+}
+VIRGL_LIBS = ['libEGL_virgl.so', 'libGLESv1_CM_virgl.so', 'libGLESv2_virgl.so']
+
+DIAGNOSTIC_RC = b'''# Stream a graphics-focused logcat to the serial console so crashes are visible.
+service vm-diagnostic-log /system/bin/sh -c "exec /system/bin/logcat -b all -v threadtime *:W surfaceflinger:V SurfaceFlinger:V EGL:V libEGL:V RenderEngine:V gralloc:V hwcomposer:V vulkan:V venus:V MESA:V ANGLE:V DEBUG:F libc:F"
+    class core
+    user shell
+    group shell log readproc
+    seclabel u:r:shell:s0
+    console ttyS0
+
+on init
+    start vm-diagnostic-log
+'''
+
 
 def run(cmd, **kw):
     return subprocess.run([str(c) for c in cmd], check=True, **kw)
@@ -256,6 +303,18 @@ def main():
     ap.add_argument('--image-name', default='googlebook-security.bin')
     ap.add_argument('--locksettings', action='store_true')
     ap.add_argument('--quiet-absent-hardware', action='store_true')
+    ap.add_argument('--venus', action='store_true',
+                    help='install the Mesa Venus Vulkan ICD and set ro.hardware.vulkan=virtio')
+    ap.add_argument('--venus-lib', default=str(ROOT / 'guest-mesa' / 'libvulkan_virtio.so'))
+    ap.add_argument('--diagnostics', action='store_true',
+                    help='stream a graphics-focused logcat to the serial console')
+    ap.add_argument('--composer', action='store_true',
+                    help='replace the vendor DRM hwcomposer with the Cuttlefish one (virtio-gpu)')
+    ap.add_argument('--virgl', action='store_true',
+                    help='install Mesa VirGL GLES (EGL) for SurfaceFlinger/HWUI')
+    ap.add_argument('--virgl-dir', default=str(ROOT / 'guest-mesa' / 'gl'))
+    ap.add_argument('--vmcompat', action='store_true',
+                    help='use the Cuttlefish software boot-control service (no firmware calls)')
     ap.add_argument('--no-copy', action='store_true', help='patch RAW in place instead of copying')
     ap.add_argument('--no-initrd', action='store_true')
     a = ap.parse_args()
@@ -331,9 +390,76 @@ def main():
         add(f'etc/vintf/manifest/vm-android.hardware.security.{n}-service.xml',
             (donor / 'vintf' / f'android.hardware.security.{n}-service.xml').read_bytes(), 'vendor_configs_file')
 
+    if a.venus:
+        venus = Path(a.venus_lib)
+        if not venus.is_file():
+            raise SystemExit(f'--venus needs {venus}; build it with ./build_guest_mesa.sh')
+        add('lib64/hw/vulkan.virtio.so', venus.read_bytes(), 'same_process_hal_file')
+
+    if a.virgl:
+        gd = Path(a.virgl_dir)
+        for n in VIRGL_LIBS + ['libgallium_dri.so']:
+            pth = gd / n
+            if not pth.is_file():
+                raise SystemExit(f'--virgl needs {pth}; build it with ./build_guest_mesa.sh')
+        if not _exists(src_fs, 'lib64/egl'):
+            dirs['lib64/egl'] = (0o755, 0, 2000, 'same_process_hal_file')
+        for n in VIRGL_LIBS:
+            add('lib64/egl/' + n, (gd / n).read_bytes(), 'same_process_hal_file')
+        add('lib64/libgallium_dri.so', (gd / 'libgallium_dri.so').read_bytes(), 'same_process_hal_file')
+
+    prop = dump_cat(src_fs, '/build.prop').decode()
+    overrides = {}
+    if a.venus:
+        # Point the Vulkan loader at the Venus ICD (it loads hw/vulkan.<ro.hardware.vulkan>.so).
+        overrides['ro.hardware.vulkan'] = 'virtio'
+    if a.composer:
+        overrides.update(COMPOSER_PROPS)
+    if a.virgl:
+        overrides.update(VIRGL_PROPS)
+    lines = [l for l in prop.splitlines() if l.split('=', 1)[0] not in overrides]
+    lines += [f'{k}={v}' for k, v in overrides.items()]
+    prop = '\n'.join(lines) + '\n'
+    prop += '\n# The VM has no StrongBox hardware.\n' + STRONGBOX_PROP + '\n'
     m = erofs_metadata.metadata(src_fs, '/build.prop')
-    add('build.prop', dump_cat(src_fs, '/build.prop') + b'\n# The VM has no StrongBox hardware.\n' + STRONGBOX_PROP.encode() + b'\n',
-        _label(m), m['mode'] & 0o7777, m['uid'], m['gid'])
+    add('build.prop', prop.encode(), _label(m), m['mode'] & 0o7777, m['uid'], m['gid'])
+
+    # GPU sysfs label, Cuttlefish composer, and optional serial logcat diagnostics.
+    fc_extra = b''
+    if a.venus:
+        fc_extra += GRAPHICS_FC_RULE
+        add('etc/init/vm-graphics.rc', VM_GRAPHICS_RC, 'vendor_configs_file')
+    if a.composer:
+        cad = donor / 'composer'
+        if not (cad / 'hwc3-service.drm').is_file():
+            raise SystemExit(f'--composer needs {cad}/hwc3-service.drm; re-run unpack_cuttlefish_donor.py')
+        add('bin/hw/android.hardware.composer.hwc3-service.drm',
+            (cad / 'hwc3-service.drm').read_bytes(), 'hal_graphics_composer_default_exec', 0o755)
+        rp = 'lib64/drm_hwcomposer_atom_reporter.so'
+        rp_data = (cad / 'drm_hwcomposer_atom_reporter.so').read_bytes()
+        if _exists(src_fs, rp):
+            rm = erofs_metadata.metadata(src_fs, '/' + rp)
+            add(rp, rp_data, _label(rm), rm['mode'] & 0o7777, rm['uid'], rm['gid'])
+        else:
+            add(rp, rp_data, 'same_process_hal_file')
+    if a.vmcompat:
+        bs = donor / 'boot-service'
+        if not bs.is_file():
+            raise SystemExit(f'--vmcompat needs {bs}; re-run unpack_cuttlefish_donor.py')
+        bp = 'bin/hw/android.hardware.boot-service.android-desktop'
+        if _exists(src_fs, bp):
+            bm = erofs_metadata.metadata(src_fs, '/' + bp)
+            add(bp, bs.read_bytes(), _label(bm), bm['mode'] & 0o7777, bm['uid'], bm['gid'])
+        else:
+            add(bp, bs.read_bytes(), 'hal_bootctl_default_exec', 0o755)
+    if a.diagnostics:
+        fc_extra += CONSOLE_FC_RULE
+        add('etc/init/vm-diagnostic-log.rc', DIAGNOSTIC_RC, 'vendor_configs_file')
+    if fc_extra:
+        fm = erofs_metadata.metadata(src_fs, '/etc/selinux/vendor_file_contexts')
+        add('etc/selinux/vendor_file_contexts',
+            dump_cat(src_fs, '/etc/selinux/vendor_file_contexts') + fc_extra,
+            _label(fm), fm['mode'] & 0o7777, fm['uid'], fm['gid'])
 
     if a.locksettings:
         add('apex/com.android.hardware.gatekeeper.nonsecure.apex',
