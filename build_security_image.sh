@@ -14,13 +14,20 @@ donor is missing: $DONOR/keymint-service
 A Cuttlefish x86_64 image is needed for the pure-software KeyMint binary (the image
 under test only has a Trusty-backed one). On a host that can reach ci.android.com:
 
-  1. download aosp_cf_x86_64_only_phone-img-<build>.zip
-  2. run: python3 "$HERE/unpack_cuttlefish_donor.py" <zip> "$DONOR"
+  1. ./fetch_cuttlefish_donor.sh 16373615
+  2. python3 unpack_cuttlefish_donor.py aosp_cf_x86_64_only_phone-img-16373615.zip "$DONOR"
 
-See SECURITY_PORT.md for details.
+See README.md and SECURITY_PORT.md for details.
 EOF
   exit 1
 fi
+
+for f in "$HERE/firmware/gpt.json" "$HERE/initrd"; do
+  if [ ! -f "$f" ]; then
+    echo "missing $f; run ./prepare.sh first (see README.md)" >&2
+    exit 1
+  fi
+done
 
 VENUS=""
 if [ -f "$HERE/guest-mesa/libvulkan_virtio.so" ]; then
