@@ -1,0 +1,28 @@
+# Large / downloaded / derived inputs (regenerate with extract_lapis.py,
+# make_initrd_x86.py, fetch_cuttlefish_donor.sh and build_security_image.sh)
+android-desktop_signed_recovery_image.bin
+*.bin
+*.raw
+*.zip
+firmware/
+initrd
+initrd.json
+modules/
+donor/
+image-security/
+logs/
+__pycache__/
+# reference checkout (not part of this repo)
+gbos-vm-mac/
+# sandbox dotfiles
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.idea/
+.mcp.json
+.profile
+.ripgreprc
+.vscode/
+.zprofile
+.zshrc
