@@ -10,7 +10,7 @@ RAW="${GBOS_RAW:-$HERE/android-desktop_signed_recovery_image.bin}"
 
 if [ ! -f "$RAW" ]; then
   echo "error: recovery image not found: $RAW" >&2
-  echo "Download it (see README.md), place it here, or set GBOS_RAW." >&2
+  echo "Run ./fetch_recovery_image.sh (or set GBOS_RAW)." >&2
   exit 1
 fi
 

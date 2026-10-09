@@ -23,6 +23,7 @@ url.txt
 # reference checkout (not part of this repo)
 gbos-vm-mac/
 # sandbox dotfiles
+.claude/
 .bash_profile
 .bashrc
 .gitconfig

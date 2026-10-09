@@ -17,6 +17,7 @@ network.
 
 | step | script | what it does |
 |------|--------|--------------|
+| recovery image | `fetch_recovery_image.sh` | download + extract Google's recovery zip |
 | fetch modules | `fetch_kernel_modules.sh` | download the `*.ko` in `modules/` from CI |
 | fetch donor | `fetch_cuttlefish_donor.sh` + `unpack_cuttlefish_donor.py` | software KeyMint, nonsecure Gatekeeper, DRM composer, software boot service |
 | prepare | `prepare.sh` | extract boot images (`firmware/`) and build the ramdisk (`initrd`) |
@@ -51,14 +52,16 @@ Check Venus is available on the host:
 qemu-system-x86_64 -device virtio-gpu-gl-pci,help | grep -E 'xres|yres|venus'
 ```
 
-## 1. Get the recovery image
+## 1. Recovery image
 
-Place the **Googlebook recovery image** at the repo root as
-`android-desktop_signed_recovery_image.bin` (~19 GB), or point `GBOS_RAW` at it.
+```sh
+./fetch_recovery_image.sh
+```
 
-It is the `android-desktop_signed_recovery_image.bin` inside Google's device recovery
-download for this build (Google's `dl.google.com/device/recovery/<product>/<build>/recovery.zip`).
-This project never redistributes it.
+Downloads Google's device recovery zip for `lapis-user/16452207` and extracts
+`android-desktop_signed_recovery_image.bin` (~19 GB) to the repo root. Override the source
+with `GBOS_RECOVERY_URL`, point `GBOS_RAW` at an existing image, or `GBOS_KEEP_ZIP=1` to
+keep the archive. (The image is never redistributed by this project.)
 
 ## 2. Kernel modules
 
