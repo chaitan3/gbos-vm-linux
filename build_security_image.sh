@@ -29,6 +29,22 @@ for f in "$HERE/firmware/gpt.json" "$HERE/initrd"; do
   fi
 done
 
+# The VM persists disk changes, so the built image may hold your state. Refuse to clobber it.
+IMG="$OUT/${GBOS_IMAGE_NAME:-googlebook-security.bin}"
+if [ -f "$IMG" ] && [ "${GBOS_FORCE:-0}" != 1 ]; then
+  cat >&2 <<EOF
+refusing to overwrite $IMG
+
+Rebuilding recreates it from the recovery image and discards anything the VM saved
+(the VM persists /data by default now). To avoid losing state:
+
+  * keep using the existing image:  ./boot_vm.sh "$PWD" <name> <secs>
+  * rebuild from scratch anyway:    GBOS_FORCE=1 ./build_security_image.sh
+  * build to a different dir:       GBOS_SECURITY_DIR=image-security-2 ./build_security_image.sh
+EOF
+  exit 1
+fi
+
 VENUS=""
 if [ -f "$HERE/guest-mesa/libvulkan_virtio.so" ]; then
   VENUS="--venus"

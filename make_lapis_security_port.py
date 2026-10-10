@@ -70,7 +70,7 @@ NEUTERED = {
         b'<manifest version="9.0" type="device"/>\n',
 }
 
-# QEMU's virtual GPU lands on PCI 0000:00:01.0 (see boot_venus.sh). Its sysfs nodes must be
+# QEMU's virtual GPU lands on PCI 0000:00:01.0 (see boot_vm.sh). Its sysfs nodes must be
 # labelled sysfs_gpu or surfaceflinger/gpuservice get denied reading uevent.
 GPU_SYSFS = '/sys/devices/pci0000:00/0000:00:01.0'
 GRAPHICS_FC_RULE = (r'/sys/devices/pci0000:00/0000:00:01\.0(/.*)? u:object_r:sysfs_gpu:s0' + '\n').encode()
@@ -82,11 +82,13 @@ on init
 '''
 
 # The stock lapis build.prop targets Intel and enables the DRM color pipeline, which makes the
-# (Cuttlefish) drm_hwcomposer reject virtio-gpu planes that lack COLOR_PIPELINE. Turn it off and
-# force client (GPU) composition, which is what a virtual display wants anyway.
+# (Cuttlefish) drm_hwcomposer reject virtio-gpu planes that lack COLOR_PIPELINE. Turn it off.
+# Keep overlay planes ENABLED (the mac port's default): drm_hwcomposer assigns the mouse cursor
+# to a device/overlay plane when the cursor plane is unavailable; with overlays disabled that
+# falls back to client composition, which is the path that renders the cursor invisible here.
 COMPOSER_PROPS = {
     'vendor.hwc.drm.enable_color_pipeline': 'false',
-    'ro.vendor.hwc.use_overlay_planes': 'false',
+    'ro.vendor.hwc.use_overlay_planes': 'true',
 }
 
 # Run SurfaceFlinger/HWUI on Mesa VirGL GLES instead of Vulkan-on-Venus: SF's Vulkan
@@ -105,8 +107,19 @@ VIRGL_PROPS = {
 }
 VIRGL_LIBS = ['libEGL_virgl.so', 'libGLESv1_CM_virgl.so', 'libGLESv2_virgl.so']
 
-DIAGNOSTIC_RC = b'''# Stream a graphics-focused logcat to the serial console so crashes are visible.
-service vm-diagnostic-log /system/bin/sh -c "exec /system/bin/logcat -b all -v threadtime *:W surfaceflinger:V SurfaceFlinger:V EGL:V libEGL:V RenderEngine:V gralloc:V hwcomposer:V vulkan:V venus:V MESA:V ANGLE:V DEBUG:F libc:F"
+# QEMU's usb-wacom-tablet enumerates as a pen/stylus, which Android routes down the stylus path
+# (ink trails). Force it to a plain absolute pointer: pointer deviceType, no size/pressure/
+# orientation calibration, and no orientation awareness for the fixed desktop display.
+WACOM_IDC = b'''# QEMU Wacom PenPartner (usb-wacom-tablet) -> plain absolute pointer, not a stylus.
+touch.deviceType = pointer
+touch.orientationAware = 0
+touch.size.calibration = none
+touch.pressure.calibration = none
+touch.orientation.calibration = none
+'''
+
+DIAGNOSTIC_RC = b'''# Stream a graphics/input-focused logcat to the serial console so crashes are visible.
+service vm-diagnostic-log /system/bin/sh -c "exec /system/bin/logcat -b all -v threadtime *:W surfaceflinger:V SurfaceFlinger:V EGL:V libEGL:V RenderEngine:V gralloc:V hwcomposer:V vulkan:V venus:V MESA:V ANGLE:V InputReader:V InputDispatcher:V WindowManager:V DEBUG:F libc:F"
     class core
     user shell
     group shell log readproc
@@ -389,6 +402,7 @@ def main():
     for n in VINTF:
         add(f'etc/vintf/manifest/vm-android.hardware.security.{n}-service.xml',
             (donor / 'vintf' / f'android.hardware.security.{n}-service.xml').read_bytes(), 'vendor_configs_file')
+    add('usr/idc/Vendor_056a_Product_0000.idc', WACOM_IDC, 'vendor_idc_file')
 
     if a.venus:
         venus = Path(a.venus_lib)

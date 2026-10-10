@@ -23,7 +23,7 @@ network.
 | prepare | `prepare.sh` | extract boot images (`firmware/`) and build the ramdisk (`initrd`) |
 | guest graphics | `build_guest_mesa.sh` | Mesa 26.2.4 for Android x86_64: Venus Vulkan ICD + VirGL GLES |
 | build image | `build_security_image.sh` | rebuild `vendor_a`, expand userdata → `image-security/` |
-| run | `boot_venus.sh` | launch QEMU with GPU/input/network → `logs/<name>/serial.log` |
+| run | `boot_vm.sh` | launch QEMU with GPU/input/network → `logs/<name>/serial.log` |
 
 Design/background notes are in `SECURITY_PORT.md`.
 
@@ -119,25 +119,32 @@ Produces `image-security/`:
 
 The original download is never modified.
 
+> **Rebuilding resets the VM.** `build_security_image.sh` regenerates
+> `image-security/googlebook-security.bin` from the recovery image, so any state the VM
+> saved (it persists `/data` by default) is discarded. It therefore **refuses to overwrite
+> an existing image** unless you set `GBOS_FORCE=1`; use `GBOS_SECURITY_DIR=<dir>` to build
+> a separate image instead of clobbering one you're using.
+
 ## 7. Run
 
 ```sh
-./boot_venus.sh "$PWD" gb-venus 240
+./boot_vm.sh "$PWD" gb-venus 240
 ```
 
-Opens a GTK window (1920×1200), grabs the mouse on hover, and logs the serial console to
-`logs/gb-venus/serial.log`. Useful greps:
+Opens an SDL window (1920×1440), grabs the mouse, and logs the serial console to
+`logs/<name>/serial.log`. Useful greps:
 
 ```sh
 grep -c boot_completed logs/gb-venus/serial.log
 grep -aE 'SurfaceFlinger|drmhwc|EthernetTracker' logs/gb-venus/serial.log | tail
 ```
 
-First boot is slow (fresh 16 GiB userdata → dexopt/package scan). To make later boots fast,
-persist `/data`:
+Disk changes are **persisted by default** (`GBOS_SNAPSHOT=off`), so the first boot is slow
+(fresh 16 GiB userdata → dexopt/package scan) but later boots are fast. For a throwaway run
+that discards `/data` when the VM stops, use `GBOS_SNAPSHOT=on`:
 
 ```sh
-GBOS_SNAPSHOT=0 ./boot_venus.sh "$PWD" gb-venus 300
+GBOS_SNAPSHOT=on ./boot_vm.sh "$PWD" gb-venus 300
 ```
 
 ## Environment overrides
@@ -148,9 +155,10 @@ GBOS_SNAPSHOT=0 ./boot_venus.sh "$PWD" gb-venus 300
 | `GBOS_DONOR` | `./donor` | Cuttlefish donor dir |
 | `GBOS_SECURITY_DIR` | `./image-security` | image output dir |
 | `GBOS_USERDATA_GIB` | `16` | userdata partition size |
-| `GBOS_XRES` / `GBOS_YRES` | `1920` / `1200` | guest display size |
-| `GBOS_SNAPSHOT` | `on` | `0` persists `/data` between boots |
-| `GBOS_DISPLAY_ARGS` | `-display gtk,gl=on,grab-on-hover=on` | e.g. `-display egl-headless` (headless), `-display egl-headless -vnc 127.0.0.1:0` (VNC) |
+| `GBOS_XRES` / `GBOS_YRES` | `1920` / `1440` | guest display size (4:3 matches the wacom tablet) |
+| `GBOS_SNAPSHOT` | `off` | `off` = persist `/data` between boots; `on` = throwaway disk |
+| `GBOS_FORCE` | `0` | `1` lets `build_security_image.sh` overwrite an existing image |
+| `GBOS_DISPLAY_ARGS` | `-display sdl,gl=on` | e.g. `-display none -spice unix=on,addr=/tmp/gbos-spice,gl=es` + a SPICE client (viewer-drawn cursor), `-display egl-headless` (headless), `-display egl-headless -vnc 127.0.0.1:0` (VNC) |
 | `GBOS_GPU_ARGS` | virtio-gpu-gl-pci, Venus, 1920×1200 | full GPU device line |
 | `GBOS_INPUT_ARGS` | xhci + usb-kbd + usb-mouse | input devices |
 | `GBOS_NET_ARGS` | user-mode NAT over virtio-net | set empty for offline |
@@ -170,5 +178,9 @@ GBOS_SNAPSHOT=0 ./boot_venus.sh "$PWD" gb-venus 300
   `expand_lapis_userdata.py` runs automatically, or bump `GBOS_USERDATA_GIB`.
 - **No network** — the host must have internet; the guest gets it via QEMU slirp NAT
   (`GBOS_NET_ARGS`). If virtio-net isn't picked up, try `usb-net` on xhci.
-- **No mouse cursor** — click/enter the window to grab the pointer (`grab-on-hover`); the
-  guest draws its own cursor. `Ctrl+Alt+G` releases it.
+- **No mouse cursor** — the guest's own cursor sprite is not composited under VirGL (SurfaceFlinger
+  draws it, but the pixels never land), so `boot_vm.sh` shows a **host-side cursor** instead:
+  `-display sdl,gl=on,show-cursor=on` keeps QEMU's cursor visible. To stop it drifting, the pointer
+  is made **absolute** with `usb-wacom-tablet`, and the image ships
+  `usr/idc/Vendor_056a_Product_0000.idc` forcing it to a plain pointer (no stylus ink trails). The
+  default 1920×1440 (4:3) resolution matches the tablet's raw range so the pointer maps 1:1.

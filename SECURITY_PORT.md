@@ -84,7 +84,7 @@ python3 make_lapis_security_port.py --donor donor --out image-security --no-copy
 ## Boot
 
 ```sh
-./boot_security.sh "$PWD" <run-name> 120
+./boot_vm.sh "$PWD" <run-name> 120
 ```
 
 This uses `image-security/googlebook-security.bin` + `image-security/initrd` and passes
@@ -93,7 +93,7 @@ This uses `image-security/googlebook-security.bin` + `image-security/initrd` and
 androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none
 ```
 
-`boot_serial.sh` now also honours `GBOS_IMAGE`, `GBOS_INITRD` and `GBOS_KERNEL`, so the
+`boot_vm.sh` honours `GBOS_IMAGE`, `GBOS_INITRD` and `GBOS_KERNEL`, so the
 stock image still boots with no overrides.
 
 Success looks like `keystore2` registering `android.system.keystore2.IKeystoreService/default`
