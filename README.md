@@ -128,6 +128,7 @@ The original download is never modified.
 ## 7. Run
 
 ```sh
+./boot_vm.sh                    # defaults to $PWD + gb-venus, no timeout
 ./boot_vm.sh "$PWD" gb-venus 240
 ```
 

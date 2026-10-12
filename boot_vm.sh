@@ -1,7 +1,8 @@
 #!/bin/sh
 # Boot the security-ported lapis image (software KeyMint, no StrongBox) under QEMU/KVM.
 #
-#   boot_vm.sh WORKDIR NAME SECONDS [extra kernel args]
+#   boot_vm.sh [WORKDIR] [NAME] [SECONDS] [extra kernel args]
+#                defaults: WORKDIR=$PWD, NAME=gb-venus; omit SECONDS to run until the window closes
 #
 # WORKDIR holds image-security/ (built by build_security_image.sh) and logs/.
 #
@@ -22,7 +23,7 @@
 #   GBOS_XRES/GBOS_YRES  default 1920x1440 (4:3, matches the wacom tablet's raw range)
 #   GBOS_IMAGE / GBOS_INITRD / GBOS_KERNEL  override the boot artifacts
 set -eu
-X=$1; NAME=$2; SECS=$3; EXTRA=${4:-}
+X=${1:-$PWD}; NAME=${2:-gb-venus}; SECS=${3:-}; EXTRA=${4:-}
 
 : "${GBOS_XRES:=1920}"
 : "${GBOS_YRES:=1440}"
@@ -52,7 +53,9 @@ androidboot.vbmeta.digest=bc270dbed03f9068d69d3da5dcbfcf80a947186d36b5dd4c5a6bcc
 androidboot.vbmeta.device_state=unlocked androidboot.verifiedbootstate=orange androidboot.veritymode=enforcing \
 androidboot.vendor.apex.com.android.hardware.keymint.strongbox.desktop=none $EXTRA"
 
-timeout "$SECS" qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 6G -machine q35 -nodefaults -no-reboot \
+# Optional wall-clock timeout; with no SECONDS, run until the window is closed.
+if [ -n "$SECS" ]; then TIMEOUT="timeout $SECS"; else TIMEOUT=""; fi
+$TIMEOUT qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 6G -machine q35 -nodefaults -no-reboot \
   -kernel "$KERNEL" -initrd "$INITRD" -append "$CMD" \
   -drive if=none,id=disk,format=raw,file="$IMAGE",snapshot="$GBOS_SNAPSHOT" \
   -device nvme,drive=disk,serial=gb0,addr=0x4 \
